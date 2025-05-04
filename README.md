@@ -89,6 +89,11 @@ Displays the trading fees that are available to claim from your pools.
 
 Example: "Show claimable fees for all my pools" or "Check available fees for USDC-WETH pool"
 
+### CREATE_MANAGER
+Creates a new Aerodrome manager contract if you don't already have one.
+
+Example: "Create a new manager for me"
+
 ## Development
 
 ```bash

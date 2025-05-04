@@ -99,6 +99,16 @@ export interface ClaimableFeesResult {
   error?: any;
 }
 
+// Define interface for create manager result
+export interface CreateManagerResult {
+  success: boolean;
+  message?: string;
+  txHash?: string;
+  managerAddress?: string;
+  alreadyExists?: boolean;
+  error?: any;
+}
+
 // Initialize provider and signer from environment variables
 const initializeProvider = () => {
   try {
@@ -1209,5 +1219,64 @@ export const getAllClaimableFees = async (): Promise<ClaimableFeesResult[]> => {
       poolName: "All Pools",
       error
     }];
+  }
+};
+
+// Create a new manager contract
+export const createNewManager = async (): Promise<CreateManagerResult> => {
+  try {
+    const manager = await getAerodromeManager();
+    
+    // Check if a manager already exists (initialize will return success: false if no manager exists)
+    const initResult = await manager.initialize();
+    
+    if (initResult.success && initResult.managerAddress) {
+      return {
+        success: true,
+        message: "You already have a manager contract",
+        managerAddress: initResult.managerAddress,
+        alreadyExists: true
+      };
+    }
+    
+    // Create a new manager
+    console.log("Creating new manager contract...");
+    const result = await manager.createManager();
+    
+    if (!result.success) {
+      return {
+        success: false,
+        message: result.message || "Failed to create manager contract",
+        error: result.error
+      };
+    }
+    
+    console.log(`Manager created successfully at ${result.managerAddress}`);
+    
+    // Initialize the manager to set the factory address properly
+    const postInitResult = await manager.initialize();
+    
+    if (!postInitResult.success) {
+      return {
+        success: true,
+        message: `Manager created at ${result.managerAddress}, but initialization failed: ${postInitResult.message}`,
+        managerAddress: result.managerAddress,
+        txHash: result.txHash
+      };
+    }
+    
+    return {
+      success: true,
+      message: "Manager created and initialized successfully",
+      managerAddress: result.managerAddress,
+      txHash: result.txHash
+    };
+  } catch (error) {
+    console.error('Error creating manager:', error);
+    return {
+      success: false,
+      message: `Error creating manager: ${(error as Error).message}`,
+      error
+    };
   }
 }; 

@@ -14,7 +14,7 @@ import {
   logger,
 } from '@elizaos/core';
 import { z } from 'zod';
-import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult, claimPoolRewards, claimAllPoolRewards, ClaimRewardsResult, claimPoolFees, ClaimFeesResult, getPoolClaimableFees, getAllClaimableFees, ClaimableFeesResult } from './aerodromeUtils';
+import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult, claimPoolRewards, claimAllPoolRewards, ClaimRewardsResult, claimPoolFees, ClaimFeesResult, getPoolClaimableFees, getAllClaimableFees, ClaimableFeesResult, createNewManager, CreateManagerResult } from './aerodromeUtils';
 
 /**
  * Defines the configuration schema for a plugin, including the validation rules for the plugin name.
@@ -1520,6 +1520,130 @@ const showClaimableFeesAction: Action = {
   ],
 };
 
+/**
+ * Create Manager action
+ * Creates a new Aerodrome manager contract for the user
+ */
+const createManagerAction: Action = {
+  name: 'CREATE_MANAGER',
+  similes: ['NEW_MANAGER', 'SETUP_MANAGER', 'INITIALIZE_MANAGER'],
+  description: 'Creates a new Aerodrome manager contract if one does not already exist',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if message contains relevant terms about creating or setting up a manager
+    const text = message.content.text.toLowerCase();
+    return (text.includes('create') || text.includes('new') || text.includes('setup') || 
+            text.includes('initialize') || text.includes('make')) && 
+           (text.includes('manager') || text.includes('contract'));
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling CREATE_MANAGER action');
+
+      // First check if a manager already exists
+      const managerAddress = await getManagerAddress();
+      
+      if (managerAddress) {
+        const alreadyExistsResponse: Content = {
+          text: `You already have a manager contract at ${managerAddress}. No need to create a new one.`,
+          actions: ['CREATE_MANAGER'],
+          source: message.content.source,
+        };
+        await callback(alreadyExistsResponse);
+        return alreadyExistsResponse;
+      }
+      
+      // Inform the user about the operation
+      const initialResponse: Content = {
+        text: `Creating a new Aerodrome manager contract for you. This may take a moment...`,
+        actions: ['CREATE_MANAGER'],
+        source: message.content.source,
+      };
+      await callback(initialResponse);
+      
+      // Create the manager
+      const result = await createNewManager() as CreateManagerResult;
+      
+      let responseText = '';
+      
+      if (result.success) {
+        // Format successful response
+        if (result.alreadyExists) {
+          responseText = `You already have a manager contract at ${result.managerAddress}.`;
+        } else {
+          responseText = `Successfully created a new manager contract at ${result.managerAddress}.`;
+          
+          if (result.txHash) {
+            responseText += `\nTransaction hash: ${result.txHash}`;
+          }
+          
+          // Add next steps
+          responseText += `\n\nNext steps:
+1. Deposit tokens to your manager using the DEPOSIT_TOKENS action
+2. Add liquidity to a pool using the ADD_LIQUIDITY action
+3. Monitor your positions using the STAKED_POSITIONS action`;
+        }
+      } else {
+        // Format error response
+        responseText = `Failed to create manager contract: ${result.message}`;
+        
+        // Add troubleshooting info
+        responseText += `\n\nPossible issues:
+- Check that your wallet has ETH/BASE for gas
+- Ensure your private key has the correct permissions
+- Try again in a few minutes`;
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['CREATE_MANAGER'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in CREATE_MANAGER action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error creating manager contract: ${(error as Error).message}`,
+        actions: ['CREATE_MANAGER'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Create a new manager for me',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully created a new manager contract at 0x1234567890abcdef1234567890abcdef12345678.\nTransaction hash: 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\n\nNext steps:\n1. Deposit tokens to your manager using the DEPOSIT_TOKENS action\n2. Add liquidity to a pool using the ADD_LIQUIDITY action\n3. Monitor your positions using the STAKED_POSITIONS action',
+          actions: ['CREATE_MANAGER'],
+        },
+      },
+    ],
+  ],
+};
+
 export class StarterService extends Service {
   static serviceType = 'starter';
   capabilityDescription =
@@ -1685,7 +1809,7 @@ export const starterPlugin: Plugin = {
     ],
   },
   services: [StarterService],
-  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction, claimRewardsAction, claimFeesAction, showClaimableFeesAction],
+  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction, claimRewardsAction, claimFeesAction, showClaimableFeesAction, createManagerAction],
   providers: [helloWorldProvider],
 };
 
