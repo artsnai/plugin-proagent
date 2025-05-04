@@ -20,6 +20,39 @@ export interface AddLiquidityAndStakeResult {
   error?: any;
 }
 
+// Define interface for the combined unstake and remove liquidity result
+export interface UnstakeAndRemoveLiquidityResult {
+  success: boolean;
+  message?: string;
+  txHash?: string;
+  poolName?: string;
+  unstaked: boolean;
+  unstakeResult?: {
+    success: boolean;
+    message?: string;
+    txHash?: string;
+  };
+  removed: boolean;
+  removeResult?: {
+    success: boolean;
+    message?: string;
+    txHash?: string;
+    amountA?: string;
+    amountB?: string;
+  };
+  error?: any;
+}
+
+// Define interface for withdrawal result
+export interface WithdrawTokensResult {
+  success: boolean;
+  message?: string;
+  txHash?: string;
+  tokenSymbol?: string;
+  amount?: number | string;
+  error?: any;
+}
+
 // Initialize provider and signer from environment variables
 const initializeProvider = () => {
   try {
@@ -546,5 +579,202 @@ export const depositTokens = async (tokenSymbol: string, amount: number) => {
   } catch (error) {
     console.error('Error depositing tokens:', error);
     throw error;
+  }
+};
+
+// Unstake all LP tokens and remove liquidity from a pool
+export const unstakeAndRemoveLiquidity = async (poolName: string): Promise<UnstakeAndRemoveLiquidityResult> => {
+  try {
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // First get staked positions
+    const positionsResult = await getStakedPositions();
+    
+    if (!positionsResult || !positionsResult.stakedPositions) {
+      return {
+        success: false,
+        message: "Could not retrieve staked positions",
+        unstaked: false,
+        removed: false,
+      };
+    }
+    
+    // Find the staked position for this pool
+    const stakedPosition = positionsResult.stakedPositions.find(
+      position => position.poolName.toLowerCase() === poolName.toLowerCase()
+    );
+    
+    if (!stakedPosition) {
+      return {
+        success: false,
+        message: `No staked position found for ${poolName}`,
+        unstaked: false,
+        removed: false,
+      };
+    }
+    
+    // Unstake LP tokens
+    let unstakeResult;
+    try {
+      console.log(`Unstaking LP tokens for ${poolName}...`);
+      unstakeResult = await manager.unstakeLPTokens(
+        stakedPosition.lpToken,
+        poolName,
+        stakedPosition.gauge,
+        "MAX" // Unstake all tokens
+      );
+      
+      if (!unstakeResult.success) {
+        return {
+          success: false,
+          message: `Failed to unstake LP tokens: ${unstakeResult.message}`,
+          unstaked: false,
+          removed: false,
+          unstakeResult
+        };
+      }
+      
+      console.log(`LP tokens unstaked successfully for ${poolName}`);
+    } catch (unstakeError) {
+      console.error('Error unstaking LP tokens:', unstakeError);
+      return {
+        success: false,
+        message: `Error unstaking LP tokens: ${(unstakeError as Error).message}`,
+        unstaked: false,
+        removed: false,
+        error: unstakeError
+      };
+    }
+    
+    // Now get LP positions to find the unstaked position
+    const lpPositions = await manager.getLPPositions();
+    
+    if (!lpPositions.success || !lpPositions.positions) {
+      return {
+        success: true,
+        message: "LP tokens unstaked but could not retrieve LP positions for removal",
+        unstaked: true,
+        unstakeResult,
+        removed: false,
+        poolName
+      };
+    }
+    
+    // Find the LP position for this pool
+    const lpPosition = lpPositions.positions.find(
+      position => position.poolName.toLowerCase() === poolName.toLowerCase()
+    );
+    
+    if (!lpPosition) {
+      return {
+        success: true,
+        message: "LP tokens unstaked but no LP position found for removal",
+        unstaked: true,
+        unstakeResult,
+        removed: false,
+        poolName
+      };
+    }
+    
+    // Remove liquidity
+    let removeResult;
+    try {
+      console.log(`Removing liquidity for ${poolName}...`);
+      removeResult = await manager.removeLiquidity(
+        poolName,
+        100 // Remove 100% of liquidity
+      );
+      
+      if (!removeResult.success) {
+        return {
+          success: true,
+          message: `LP tokens unstaked but failed to remove liquidity: ${removeResult.message}`,
+          unstaked: true,
+          unstakeResult,
+          removed: false,
+          removeResult,
+          poolName
+        };
+      }
+      
+      console.log(`Liquidity removed successfully for ${poolName}`);
+    } catch (removeError) {
+      console.error('Error removing liquidity:', removeError);
+      return {
+        success: true,
+        message: `LP tokens unstaked but error removing liquidity: ${(removeError as Error).message}`,
+        unstaked: true,
+        unstakeResult,
+        removed: false,
+        error: removeError,
+        poolName
+      };
+    }
+    
+    // Success!
+    return {
+      success: true,
+      message: `Successfully unstaked LP tokens and removed liquidity for ${poolName}`,
+      txHash: removeResult.txHash,
+      poolName,
+      unstaked: true,
+      unstakeResult,
+      removed: true,
+      removeResult
+    };
+    
+  } catch (error) {
+    console.error('Error in unstakeAndRemoveLiquidity operation:', error);
+    return {
+      success: false,
+      message: `Error in operation: ${(error as Error).message}`,
+      unstaked: false,
+      removed: false,
+      error
+    };
+  }
+};
+
+// Withdraw tokens from the manager
+export const withdrawTokens = async (tokenSymbol: string, amount: number | string = "ALL"): Promise<WithdrawTokensResult> => {
+  try {
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // Check if amount is "MAX" or "ALL" and handle it properly
+    let parsedAmount: number | "ALL" = "ALL";
+    if (amount !== "ALL" && amount !== "MAX") {
+      if (typeof amount === 'string') {
+        parsedAmount = parseFloat(amount);
+        if (isNaN(parsedAmount)) {
+          return {
+            success: false,
+            message: `Invalid amount: ${amount}`
+          };
+        }
+      } else {
+        parsedAmount = amount;
+      }
+    }
+    
+    // Call the withdraw function
+    console.log(`Withdrawing ${parsedAmount === "ALL" ? "all" : parsedAmount} ${tokenSymbol}...`);
+    const result = await manager.withdrawTokens(tokenSymbol, parsedAmount);
+    
+    return {
+      ...result,
+      tokenSymbol,
+      amount: parsedAmount
+    };
+  } catch (error) {
+    console.error('Error withdrawing tokens:', error);
+    return {
+      success: false,
+      message: `Error withdrawing tokens: ${(error as Error).message}`,
+      tokenSymbol,
+      amount,
+      error
+    };
   }
 }; 

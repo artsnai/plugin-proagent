@@ -14,7 +14,7 @@ import {
   logger,
 } from '@elizaos/core';
 import { z } from 'zod';
-import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult } from './aerodromeUtils';
+import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult } from './aerodromeUtils';
 
 /**
  * Defines the configuration schema for a plugin, including the validation rules for the plugin name.
@@ -661,6 +661,297 @@ const depositTokensAction: Action = {
   ],
 };
 
+/**
+ * Liquidate Position action
+ * Unstakes and removes liquidity for a specified token pair
+ */
+const liquidatePositionAction: Action = {
+  name: 'LIQUIDATE_POSITION',
+  similes: ['UNSTAKE_AND_REMOVE', 'EXIT_POSITION', 'CLOSE_POSITION'],
+  description: 'Unstakes LP tokens and removes liquidity from a specified pool',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if a pool name or liquidate term is mentioned
+    const text = message.content.text.toLowerCase();
+    return text.includes('pool') || text.includes('liquidate') || text.includes('unstake') || text.includes('remove');
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling LIQUIDATE_POSITION action');
+
+      // Extract pool name from message
+      const text = message.content.text;
+      let poolName = '';
+      
+      // Try to find pool name in common formats
+      const poolRegex = /([A-Za-z0-9]+-[A-Za-z0-9]+)(?:\s+pool)?|(?:pool|position|liquidity)(?:\s+(?:for|in|on))?\s+([A-Za-z0-9]+-[A-Za-z0-9]+)/i;
+      const match = text.match(poolRegex);
+      
+      if (match && (match[1] || match[2])) {
+        // Take whichever group matched
+        poolName = (match[1] || match[2]).toUpperCase(); // Convert to uppercase for consistency
+      } else {
+        // If no pool specified, tell the user we need a pool name
+        const missingPoolResponse: Content = {
+          text: `Please specify which pool you want to liquidate (e.g., "liquidate USDC-WETH pool").`,
+          actions: ['LIQUIDATE_POSITION'],
+          source: message.content.source,
+        };
+        await callback(missingPoolResponse);
+        return missingPoolResponse;
+      }
+      
+      // Inform the user about the operation
+      const initialResponse: Content = {
+        text: `Liquidating your position in the ${poolName} pool. This will unstake LP tokens and remove liquidity. This may take a moment...`,
+        actions: ['LIQUIDATE_POSITION'],
+        source: message.content.source,
+      };
+      await callback(initialResponse);
+      
+      // Perform the operation
+      const result = await unstakeAndRemoveLiquidity(poolName) as UnstakeAndRemoveLiquidityResult;
+      
+      let responseText = '';
+      
+      if (result.success) {
+        // Format successful response
+        responseText = `Successfully liquidated your position in the ${poolName} pool.\n`;
+        
+        // Add details about unstaking
+        if (result.unstaked) {
+          responseText += `LP tokens were unstaked from the gauge.\n`;
+        }
+        
+        // Add details about removing liquidity
+        if (result.removed && result.removeResult) {
+          responseText += `Liquidity was removed from the pool.\n`;
+          
+          // Try to include token amounts if available
+          if (result.removeResult.amountA && result.removeResult.amountB) {
+            responseText += `Received tokens from the pool.\n`;
+          }
+          
+          if (result.removeResult.txHash) {
+            responseText += `Remove liquidity transaction hash: ${result.removeResult.txHash}\n`;
+          }
+        } else if (result.unstaked) {
+          // Partial success - unstaked but not removed
+          responseText += `Warning: ${result.message}\n`;
+        }
+      } else {
+        // Format error response
+        responseText = `Failed to liquidate position in the ${poolName} pool: ${result.message}`;
+        
+        // Add more specific guidance based on the error
+        if (result.message && result.message.includes('No staked position found')) {
+          responseText += '\nYou might not have any staked LP tokens in this pool. Check your positions with the STAKED_POSITIONS action.';
+        }
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['LIQUIDATE_POSITION'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in LIQUIDATE_POSITION action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error liquidating position: ${(error as Error).message}`,
+        actions: ['LIQUIDATE_POSITION'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Liquidate my USDC-WETH position',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully liquidated your position in the USDC-WETH pool.\nLP tokens were unstaked from the gauge.\nLiquidity was removed from the pool.\nReceived tokens from the pool.',
+          actions: ['LIQUIDATE_POSITION'],
+        },
+      },
+    ],
+  ],
+};
+
+/**
+ * Withdraw Tokens action
+ * Withdraws tokens from the Aerodrome manager contract
+ */
+const withdrawTokensAction: Action = {
+  name: 'WITHDRAW_TOKENS',
+  similes: ['WITHDRAW', 'GET_TOKENS', 'TAKE_OUT'],
+  description: 'Withdraws tokens from the Aerodrome manager contract',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if a withdraw-related term is mentioned
+    const text = message.content.text.toLowerCase();
+    return text.includes('withdraw') || text.includes('get') || text.includes('take');
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling WITHDRAW_TOKENS action');
+
+      // Extract token and amount from message
+      const text = message.content.text;
+      
+      // Try to find token symbol in common formats
+      // Look for token symbols like USDC, WETH, AERO, etc.
+      const tokenRegex = /(USDC|WETH|AERO|VIRTUAL|TN100x|VEIL)/i;
+      const tokenMatch = text.match(tokenRegex);
+      
+      let tokenSymbol = '';
+      if (tokenMatch && tokenMatch[1]) {
+        tokenSymbol = tokenMatch[1].toUpperCase(); // Convert to uppercase for consistency
+      } else {
+        // If no token specified, ask the user to specify
+        const missingTokenResponse: Content = {
+          text: `Please specify which token you want to withdraw (e.g., "withdraw USDC" or "withdraw all WETH").`,
+          actions: ['WITHDRAW_TOKENS'],
+          source: message.content.source,
+        };
+        await callback(missingTokenResponse);
+        return missingTokenResponse;
+      }
+      
+      // Try to find amount
+      let amount: number | string = "ALL"; // Default to ALL
+      
+      // Check if "all" is specified
+      const allRegex = /\b(all|max)\b/i;
+      const allMatch = text.match(allRegex);
+      
+      if (!allMatch) {
+        // Try to find a specific amount
+        const amountRegex = /(\d+(?:\.\d+)?)\s*(USDC|WETH|AERO|VIRTUAL|TN100x|VEIL)?/i;
+        const amountMatch = text.match(amountRegex);
+        
+        if (amountMatch && amountMatch[1]) {
+          amount = parseFloat(amountMatch[1]);
+        }
+      }
+      
+      // Inform the user about the withdrawal
+      const initialResponse: Content = {
+        text: `Withdrawing ${amount === "ALL" ? "all" : amount} ${tokenSymbol} from the manager. This may take a moment...`,
+        actions: ['WITHDRAW_TOKENS'],
+        source: message.content.source,
+      };
+      await callback(initialResponse);
+      
+      // Withdraw tokens
+      const result = await withdrawTokens(tokenSymbol, amount) as WithdrawTokensResult;
+      
+      let responseText = '';
+      
+      if (result.success) {
+        // Format successful response
+        const amountText = result.amount === "ALL" ? "all" : result.amount;
+        responseText = `Successfully withdrew ${amountText} ${tokenSymbol} from the manager.`;
+        
+        if (result.txHash) {
+          responseText += `\nTransaction hash: ${result.txHash}`;
+        }
+      } else {
+        // Format error response
+        responseText = `Failed to withdraw tokens: ${result.message}`;
+        
+        // Add more specific guidance based on common errors
+        if (result.message && result.message.includes('Insufficient balance')) {
+          responseText += `\nYou don't have enough ${tokenSymbol} in the manager. Check your balances with the BALANCES action.`;
+        }
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['WITHDRAW_TOKENS'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in WITHDRAW_TOKENS action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error withdrawing tokens: ${(error as Error).message}`,
+        actions: ['WITHDRAW_TOKENS'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Withdraw all my USDC',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully withdrew all USDC from the manager.\nTransaction hash: 0x1234...',
+          actions: ['WITHDRAW_TOKENS'],
+        },
+      },
+    ],
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Withdraw 5 WETH',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully withdrew 5 WETH from the manager.\nTransaction hash: 0x5678...',
+          actions: ['WITHDRAW_TOKENS'],
+        },
+      },
+    ],
+  ],
+};
+
 export class StarterService extends Service {
   static serviceType = 'starter';
   capabilityDescription =
@@ -826,7 +1117,7 @@ export const starterPlugin: Plugin = {
     ],
   },
   services: [StarterService],
-  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction],
+  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction],
   providers: [helloWorldProvider],
 };
 

@@ -49,13 +49,13 @@ const POOLS = [
     stable: false, 
     slippage: 30
   },
-  {
-    name: "WETH-TN100x",
-    tokenA: { symbol: "WETH", decimals: 18, amount: "0.0001" },
-    tokenB: { symbol: "TN100x", decimals: 18, amount: "0.0001" },
-    stable: false,
-    slippage: 30
-  },
+  // {
+  //   name: "WETH-TN100x",
+  //   tokenA: { symbol: "WETH", decimals: 18, amount: "0.0001" },
+  //   tokenB: { symbol: "TN100x", decimals: 18, amount: "0.0001" },
+  //   stable: false,
+  //   slippage: 30
+  // },
   {
     name: "WETH-VEIL",
     tokenA: { symbol: "WETH", decimals: 18, amount: "0.0001" },
