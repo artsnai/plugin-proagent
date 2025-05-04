@@ -14,7 +14,7 @@ import {
   logger,
 } from '@elizaos/core';
 import { z } from 'zod';
-import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult, claimPoolRewards, claimAllPoolRewards, ClaimRewardsResult } from './aerodromeUtils';
+import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult, claimPoolRewards, claimAllPoolRewards, ClaimRewardsResult, claimPoolFees, ClaimFeesResult, getPoolClaimableFees, getAllClaimableFees, ClaimableFeesResult } from './aerodromeUtils';
 
 /**
  * Defines the configuration schema for a plugin, including the validation rules for the plugin name.
@@ -1149,6 +1149,377 @@ const claimRewardsAction: Action = {
   ],
 };
 
+/**
+ * Claim Fees action
+ * Claims trading fees from a specific pool in Aerodrome
+ */
+const claimFeesAction: Action = {
+  name: 'CLAIM_FEES',
+  similes: ['COLLECT_FEES', 'GET_FEES', 'COLLECT_TRADING_FEES'],
+  description: 'Claims trading fees from a specific pool in Aerodrome',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if a fee-related term is mentioned
+    const text = message.content.text.toLowerCase();
+    return text.includes('fee') || text.includes('collect') || 
+           (text.includes('claim') && !text.includes('reward'));
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling CLAIM_FEES action');
+
+      // Extract pool name from message
+      const text = message.content.text;
+      let poolName = '';
+      
+      // Try to find pool name in common formats
+      const poolRegex = /([A-Za-z0-9]+-[A-Za-z0-9]+)(?:\s+pool)?|(?:pool|position|fees)(?:\s+(?:for|in|on|from))?\s+([A-Za-z0-9]+-[A-Za-z0-9]+)/i;
+      const match = text.match(poolRegex);
+      
+      if (match && (match[1] || match[2])) {
+        // Take whichever group matched
+        poolName = (match[1] || match[2]).toUpperCase(); // Convert to uppercase for consistency
+      } else {
+        // If no pool specified, ask the user to specify
+        const missingPoolResponse: Content = {
+          text: `Please specify which pool you want to claim fees from (e.g., "claim fees from USDC-WETH pool").`,
+          actions: ['CLAIM_FEES'],
+          source: message.content.source,
+        };
+        await callback(missingPoolResponse);
+        return missingPoolResponse;
+      }
+      
+      // Inform the user about the operation
+      const initialResponse: Content = {
+        text: `Claiming trading fees from the ${poolName} pool. This may take a moment...`,
+        actions: ['CLAIM_FEES'],
+        source: message.content.source,
+      };
+      await callback(initialResponse);
+      
+      // Perform the claim operation
+      const result = await claimPoolFees(poolName) as ClaimFeesResult;
+      
+      let responseText = '';
+      
+      if (result.success) {
+        // Format successful response
+        responseText = `Successfully claimed trading fees from the ${poolName} pool.`;
+        
+        // Add token amounts if available
+        if (result.amount0Received && result.amount1Received) {
+          const token0Symbol = poolName.split('-')[0];
+          const token1Symbol = poolName.split('-')[1];
+          
+          // Format amounts more nicely if they are BigInt
+          const amount0 = typeof result.formattedAmount0 === 'string' ? 
+                          result.formattedAmount0 : 
+                          (result.amount0Received ? result.amount0Received.toString() : '0');
+                          
+          const amount1 = typeof result.formattedAmount1 === 'string' ? 
+                          result.formattedAmount1 : 
+                          (result.amount1Received ? result.amount1Received.toString() : '0');
+          
+          responseText += `\nReceived: ${amount0} ${token0Symbol} and ${amount1} ${token1Symbol}`;
+        }
+        
+        if (result.txHash) {
+          responseText += `\nTransaction hash: ${result.txHash}`;
+        }
+      } else {
+        // Format error response
+        responseText = `Failed to claim trading fees from the ${poolName} pool: ${result.message}`;
+        
+        // Add more specific guidance for common errors
+        if (result.message && result.message.includes('Could not find addresses')) {
+          responseText += `\nPlease make sure you're using valid token symbols (e.g., USDC-WETH).`;
+        } else if (result.message && result.message.includes('No fees')) {
+          responseText += `\nThere might not be any trading fees to claim yet. Trading fees accumulate over time as the pool is used.`;
+        }
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['CLAIM_FEES'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in CLAIM_FEES action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error claiming trading fees: ${(error as Error).message}`,
+        actions: ['CLAIM_FEES'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Claim fees from USDC-WETH pool',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully claimed trading fees from the USDC-WETH pool.\nReceived: 0.5 USDC and 0.0001 WETH\nTransaction hash: 0x1234...',
+          actions: ['CLAIM_FEES'],
+        },
+      },
+    ],
+  ],
+};
+
+/**
+ * Show Claimable Fees action
+ * Displays the trading fees available to claim from pools
+ */
+const showClaimableFeesAction: Action = {
+  name: 'SHOW_CLAIMABLE_FEES',
+  similes: ['DISPLAY_FEES', 'GET_CLAIMABLE_FEES', 'CHECK_FEES'],
+  description: 'Displays the trading fees available to claim from pools',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if message contains relevant terms
+    const text = message.content.text.toLowerCase();
+    return (text.includes('fee') || text.includes('claimable')) && 
+           (text.includes('show') || text.includes('display') || text.includes('check') || 
+            text.includes('get') || text.includes('view') || text.includes('available'));
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling SHOW_CLAIMABLE_FEES action');
+
+      // Check if a specific pool is mentioned
+      const text = message.content.text;
+      let poolName = '';
+      let showAllPools = true;
+      
+      // Try to find pool name in common formats if present
+      const poolRegex = /([A-Za-z0-9]+-[A-Za-z0-9]+)(?:\s+pool)?|(?:pool|position|fees)(?:\s+(?:for|in|on|from))?\s+([A-Za-z0-9]+-[A-Za-z0-9]+)/i;
+      const match = text.match(poolRegex);
+      
+      if (match && (match[1] || match[2])) {
+        // Take whichever group matched
+        poolName = (match[1] || match[2]).toUpperCase(); // Convert to uppercase for consistency
+        showAllPools = false;
+      }
+      
+      // Inform the user about the operation
+      let initialResponse: Content;
+      
+      if (showAllPools) {
+        initialResponse = {
+          text: `Checking claimable trading fees for all active pools. This may take a moment...`,
+          actions: ['SHOW_CLAIMABLE_FEES'],
+          source: message.content.source,
+        };
+      } else {
+        initialResponse = {
+          text: `Checking claimable trading fees for the ${poolName} pool. This may take a moment...`,
+          actions: ['SHOW_CLAIMABLE_FEES'],
+          source: message.content.source,
+        };
+      }
+      
+      await callback(initialResponse);
+      
+      // Get the claimable fees data
+      let results: ClaimableFeesResult[] = [];
+      
+      if (showAllPools) {
+        results = await getAllClaimableFees();
+      } else {
+        const result = await getPoolClaimableFees(poolName);
+        results = [result];
+      }
+      
+      // Format the response
+      let responseText = '';
+      
+      // Check if we have valid results
+      if (results.length === 0) {
+        responseText = "No active pools found with claimable fees.";
+      } else if (results.length === 1 && !results[0].success && results[0].poolName === "None") {
+        responseText = "No active LP positions found. You need to add liquidity to a pool first.";
+      } else {
+        // Find successful results with claimable fees
+        const successfulResults = results.filter(r => r.success);
+        
+        if (successfulResults.length === 0) {
+          // All results failed
+          responseText = "Could not retrieve claimable fees for any pools.";
+          
+          // Add the first error message
+          if (results[0].message) {
+            responseText += `\nError: ${results[0].message}`;
+          }
+        } else {
+          // Have at least one successful result
+          if (showAllPools) {
+            responseText = "Claimable trading fees for your active pools:\n\n";
+          } else {
+            responseText = `Claimable trading fees for the ${poolName} pool:\n\n`;
+          }
+          
+          // Process each successful result
+          let hasClaimableFees = false;
+          
+          for (const result of successfulResults) {
+            // Skip if we don't have token symbols or formatted amounts
+            if (!result.token0Symbol || !result.token1Symbol || 
+                !result.formattedClaimable0 || !result.formattedClaimable1) {
+              continue;
+            }
+            
+            // Check if any fees are claimable (non-zero)
+            const hasClaimable0 = result.formattedClaimable0 !== "0" && 
+                                  result.formattedClaimable0 !== "0.0" && 
+                                  result.formattedClaimable0 !== "0.00";
+                                  
+            const hasClaimable1 = result.formattedClaimable1 !== "0" && 
+                                  result.formattedClaimable1 !== "0.0" && 
+                                  result.formattedClaimable1 !== "0.00";
+            
+            // Always display the pool, even if all fees are zero
+            responseText += `${result.poolName}:\n`;
+            
+            // Display token0 balance, indicating if it's claimable or not
+            responseText += `- ${result.formattedClaimable0} ${result.token0Symbol}`;
+            if (!hasClaimable0) {
+              responseText += " (nothing to claim)";
+            }
+            responseText += "\n";
+            
+            // Display token1 balance, indicating if it's claimable or not
+            responseText += `- ${result.formattedClaimable1} ${result.token1Symbol}`;
+            if (!hasClaimable1) {
+              responseText += " (nothing to claim)";
+            }
+            responseText += "\n\n";
+            
+            // Track if at least one pool has non-zero fees
+            if (hasClaimable0 || hasClaimable1) {
+              hasClaimableFees = true;
+            }
+          }
+          
+          // Change this section to only add the claiming instructions if there are fees
+          if (hasClaimableFees) {
+            // Add instructions for claiming
+            responseText += "To claim these fees, use the CLAIM_FEES action with a specific pool name.";
+          } else {
+            // All fees are zero, add explanation
+            if (showAllPools) {
+              responseText += "None of your pools have claimable trading fees at this time.\n";
+              responseText += "Trading fees accumulate as users trade through your pool.";
+            } else {
+              responseText += `The ${poolName} pool has no claimable trading fees at this time.\n`;
+              responseText += "Trading fees accumulate as users trade through your pool.";
+            }
+          }
+        }
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['SHOW_CLAIMABLE_FEES'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in SHOW_CLAIMABLE_FEES action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error checking claimable fees: ${(error as Error).message}`,
+        actions: ['SHOW_CLAIMABLE_FEES'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Show claimable fees for all my pools',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Claimable trading fees for your active pools:\n\nUSDC-WETH:\n- 0.5 USDC\n- 0.0001 WETH\n\nUSDC-AERO:\n- 0.2 USDC\n- 0.0 AERO (nothing to claim)\n\nWETH-VEIL:\n- 0.0 WETH (nothing to claim)\n- 0.0 VEIL (nothing to claim)\n\nTo claim these fees, use the CLAIM_FEES action with a specific pool name.',
+          actions: ['SHOW_CLAIMABLE_FEES'],
+        },
+      },
+    ],
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Check available fees for USDC-WETH pool',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Claimable trading fees for the USDC-WETH pool:\n\nUSDC-WETH:\n- 0.5 USDC\n- 0.0001 WETH\n\nTo claim these fees, use the CLAIM_FEES action with a specific pool name.',
+          actions: ['SHOW_CLAIMABLE_FEES'],
+        },
+      },
+    ],
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Check available fees for WETH-VEIL pool',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Claimable trading fees for the WETH-VEIL pool:\n\nWETH-VEIL:\n- 0.0 WETH (nothing to claim)\n- 0.0 VEIL (nothing to claim)\n\nThe WETH-VEIL pool has no claimable trading fees at this time.\nTrading fees accumulate as users trade through your pool.',
+          actions: ['SHOW_CLAIMABLE_FEES'],
+        },
+      },
+    ],
+  ],
+};
+
 export class StarterService extends Service {
   static serviceType = 'starter';
   capabilityDescription =
@@ -1314,7 +1685,7 @@ export const starterPlugin: Plugin = {
     ],
   },
   services: [StarterService],
-  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction, claimRewardsAction],
+  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction, claimRewardsAction, claimFeesAction, showClaimableFeesAction],
   providers: [helloWorldProvider],
 };
 

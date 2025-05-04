@@ -14,6 +14,8 @@ The plugin offers the following capabilities:
 - Liquidate positions (unstake and remove liquidity)
 - Withdraw tokens from your manager
 - Claim rewards from staked positions
+- Claim trading fees from pools
+- View claimable trading fees in pools
 
 ## Configuration
 
@@ -76,6 +78,16 @@ Example: "Withdraw all my USDC" or "Withdraw 5 WETH"
 Claims rewards from your staked positions in Aerodrome pools.
 
 Example: "Claim rewards from USDC-WETH pool" or "Claim all my rewards"
+
+### CLAIM_FEES
+Claims trading fees from your liquidity positions in Aerodrome pools.
+
+Example: "Claim fees from USDC-WETH pool"
+
+### SHOW_CLAIMABLE_FEES
+Displays the trading fees that are available to claim from your pools.
+
+Example: "Show claimable fees for all my pools" or "Check available fees for USDC-WETH pool"
 
 ## Development
 
@@ -157,15 +169,23 @@ Aerodrome is a decentralized exchange (DEX) on the Base network, forked from Vel
    - Check your balances and staked positions regularly.
    - Ask: "Show me my staked positions"
 
-5. **Claim Rewards**:
+5. **Check Claimable Fees**:
+   - View the trading fees that have accumulated in your pools.
+   - Ask: "Show claimable fees for all my pools" or "Check fees for USDC-AERO pool"
+
+6. **Claim Rewards**:
    - Harvest rewards from your staked positions when they accumulate.
-   - Ask: "Claim rewards from USDC-WETH pool" or "Claim all my rewards"
+   - Ask: "Claim rewards from USDC-AERO pool" or "Claim all my rewards"
 
-6. **Liquidate Positions**:
+7. **Claim Trading Fees**:
+   - Collect trading fees that have accumulated in your pools.
+   - Ask: "Claim fees from USDC-AERO pool"
+
+8. **Liquidate Positions**:
    - When you want to exit a position, you can liquidate it to unstake and remove liquidity in one step.
-   - Ask: "Liquidate my USDC-WETH position"
+   - Ask: "Liquidate my USDC-AERO position"
 
-7. **Withdraw Tokens**:
+9. **Withdraw Tokens**:
    - After removing liquidity or when you need your tokens, withdraw them to your wallet.
    - Ask: "Withdraw all my USDC" or "Withdraw 5 WETH"
 
@@ -180,6 +200,8 @@ This plugin requires the manager contract to implement certain functions:
 - `withdrawTokens` - To withdraw tokens from the manager
 - `claimRewards` - To claim rewards from a specific pool
 - `claimAllRewards` - To claim rewards from all pools
+- `claimFees` - To claim trading fees from pools
+- `getClaimableFees` - To check available trading fees in pools
 
 If your contract implementation is missing any of these methods, some actions may fail. Make sure to use the latest UserLPManager contract that includes all required functionality.
 

@@ -65,6 +65,40 @@ export interface ClaimRewardsResult {
   error?: any;
 }
 
+// Define interface for claim fees result
+export interface ClaimFeesResult {
+  success: boolean;
+  message?: string;
+  txHash?: string;
+  tokenA?: string;
+  tokenB?: string;
+  poolName?: string;
+  stable?: boolean;
+  amount0Received?: bigint;
+  amount1Received?: bigint;
+  formattedAmount0?: string;
+  formattedAmount1?: string;
+  error?: any;
+}
+
+// Define interface for claimable fees result
+export interface ClaimableFeesResult {
+  success: boolean;
+  message?: string;
+  poolName: string;
+  tokenA?: string;
+  tokenB?: string;
+  stable?: boolean;
+  lpBalance?: bigint;
+  claimable0?: bigint;
+  claimable1?: bigint;
+  formattedClaimable0?: string;
+  formattedClaimable1?: string;
+  token0Symbol?: string;
+  token1Symbol?: string;
+  error?: any;
+}
+
 // Initialize provider and signer from environment variables
 const initializeProvider = () => {
   try {
@@ -206,15 +240,104 @@ export const removeManager = async (managerAddress: string) => {
   }
 };
 
-// Claim fees
-export const claimFees = async (tokenA: string, tokenB: string, stable: boolean) => {
+// Enhanced claimFees function with better return type
+export const claimFees = async (tokenA: string, tokenB: string, stable: boolean): Promise<ClaimFeesResult> => {
   try {
     const manager = await getAerodromeManager();
     await manager.initialize();
-    return await manager.claimFees(tokenA, tokenB, stable);
+    
+    console.log(`Claiming fees for ${tokenA}/${tokenB} (stable: ${stable})...`);
+    const result = await manager.claimFees(tokenA, tokenB, stable);
+    
+    if (!result.success) {
+      return {
+        success: false,
+        message: result.message || "Failed to claim fees",
+        tokenA,
+        tokenB,
+        stable,
+        error: result.error
+      };
+    }
+    
+    // Format return values
+    return {
+      success: true,
+      message: "Successfully claimed fees",
+      txHash: result.txHash,
+      tokenA,
+      tokenB,
+      stable,
+      amount0Received: result.amount0Received,
+      amount1Received: result.amount1Received,
+      formattedAmount0: result.amount0Received ? result.amount0Received.toString() : "0",
+      formattedAmount1: result.amount1Received ? result.amount1Received.toString() : "0"
+    };
   } catch (error) {
     console.error('Error claiming fees:', error);
-    throw error;
+    return {
+      success: false,
+      message: `Error claiming fees: ${(error as Error).message}`,
+      tokenA,
+      tokenB,
+      stable,
+      error
+    };
+  }
+};
+
+// Claim fees using pool name instead of token addresses
+export const claimPoolFees = async (poolName: string): Promise<ClaimFeesResult> => {
+  try {
+    // Parse pool name to get token symbols
+    const poolTokens = poolName.split('-');
+    if (poolTokens.length !== 2) {
+      return {
+        success: false,
+        message: `Invalid pool name format: ${poolName}. Expected format: TOKEN1-TOKEN2`,
+        poolName
+      };
+    }
+    
+    // Get token addresses from ADDRESSES
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // Get addresses directly from the imported ADDRESSES
+    const { ADDRESSES } = await import('./addresses');
+    // Use BASE network addresses
+    const addresses = ADDRESSES.BASE;
+    
+    const token0 = addresses[poolTokens[0]];
+    const token1 = addresses[poolTokens[1]];
+    
+    if (!token0 || !token1) {
+      return {
+        success: false,
+        message: `Could not find addresses for tokens: ${poolTokens[0]}, ${poolTokens[1]}`,
+        poolName
+      };
+    }
+    
+    // Determine if stable pool
+    const stable = poolName.toLowerCase().includes('stable');
+    
+    // Call claimFees with the token addresses
+    const result = await claimFees(token0, token1, stable);
+    
+    // Add pool name to the result
+    return {
+      ...result,
+      poolName
+    };
+  } catch (error) {
+    console.error('Error claiming pool fees:', error);
+    return {
+      success: false,
+      message: `Error claiming pool fees: ${(error as Error).message}`,
+      poolName,
+      error
+    };
   }
 };
 
@@ -928,6 +1051,162 @@ export const claimAllPoolRewards = async (): Promise<ClaimRewardsResult[]> => {
     return [{
       success: false,
       message: `Error claiming all rewards: ${(error as Error).message}`,
+      error
+    }];
+  }
+};
+
+// Get claimable fees for a specific pool
+export const getPoolClaimableFees = async (poolName: string): Promise<ClaimableFeesResult> => {
+  try {
+    // Parse pool name to get token symbols
+    const poolTokens = poolName.split('-');
+    if (poolTokens.length !== 2) {
+      return {
+        success: false,
+        message: `Invalid pool name format: ${poolName}. Expected format: TOKEN1-TOKEN2`,
+        poolName
+      };
+    }
+    
+    const token0Symbol = poolTokens[0];
+    const token1Symbol = poolTokens[1];
+    
+    // Get token addresses from ADDRESSES
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // Get addresses directly from the imported ADDRESSES
+    const { ADDRESSES } = await import('./addresses');
+    // Use BASE network addresses
+    const addresses = ADDRESSES.BASE;
+    
+    const token0 = addresses[token0Symbol];
+    const token1 = addresses[token1Symbol];
+    
+    if (!token0 || !token1) {
+      return {
+        success: false,
+        message: `Could not find addresses for tokens: ${token0Symbol}, ${token1Symbol}`,
+        poolName,
+        token0Symbol,
+        token1Symbol
+      };
+    }
+    
+    // Determine if stable pool
+    const stable = poolName.toLowerCase().includes('stable');
+    
+    console.log(`Getting claimable fees for ${poolName}...`);
+    const result = await manager.getClaimableFees(token0, token1, stable);
+    
+    if (!result.success) {
+      return {
+        success: false,
+        message: result.message || "Failed to get claimable fees",
+        poolName,
+        tokenA: token0,
+        tokenB: token1,
+        stable,
+        token0Symbol,
+        token1Symbol
+      };
+    }
+    
+    // Try to format the claimable amounts
+    let formattedClaimable0 = "0";
+    let formattedClaimable1 = "0";
+    
+    try {
+      const { ethers } = await import('ethers');
+      // Find token decimals - default to 18, use 6 for USDC
+      const decimals0 = token0Symbol === 'USDC' ? 6 : 18;
+      const decimals1 = token1Symbol === 'USDC' ? 6 : 18;
+      
+      formattedClaimable0 = ethers.formatUnits(result.claimable0 || 0, decimals0);
+      formattedClaimable1 = ethers.formatUnits(result.claimable1 || 0, decimals1);
+    } catch (error) {
+      console.warn("Error formatting claimable amounts:", error);
+      // Fall back to simple string conversion
+      formattedClaimable0 = (result.claimable0 || 0).toString();
+      formattedClaimable1 = (result.claimable1 || 0).toString();
+    }
+    
+    return {
+      success: true,
+      poolName,
+      tokenA: token0,
+      tokenB: token1,
+      stable,
+      lpBalance: result.lpBalance,
+      claimable0: result.claimable0 || result.claimable0Amount,
+      claimable1: result.claimable1 || result.claimable1Amount,
+      formattedClaimable0,
+      formattedClaimable1,
+      token0Symbol,
+      token1Symbol
+    };
+  } catch (error) {
+    console.error('Error getting claimable fees:', error);
+    return {
+      success: false,
+      message: `Error getting claimable fees: ${(error as Error).message}`,
+      poolName,
+      error
+    };
+  }
+};
+
+// Get claimable fees for all active pools
+export const getAllClaimableFees = async (): Promise<ClaimableFeesResult[]> => {
+  try {
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // First get positions to find active pools
+    const positionsResult = await manager.getLPPositions();
+    
+    if (!positionsResult.success || !positionsResult.positions || positionsResult.positions.length === 0) {
+      return [{
+        success: false,
+        message: "No active LP positions found",
+        poolName: "None"
+      }];
+    }
+    
+    const positions = positionsResult.positions;
+    const results: ClaimableFeesResult[] = [];
+    
+    // Process each position
+    for (const position of positions) {
+      const poolName = position.poolName || "Unknown Pool";
+      
+      // Skip if we couldn't determine the pool name
+      if (poolName === "Unknown Pool") {
+        continue;
+      }
+      
+      try {
+        // Get claimable fees for this pool
+        const result = await getPoolClaimableFees(poolName);
+        results.push(result);
+      } catch (error) {
+        console.error(`Error getting fees for ${poolName}:`, error);
+        results.push({
+          success: false,
+          message: `Error: ${(error as Error).message}`,
+          poolName
+        });
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error('Error getting all claimable fees:', error);
+    return [{
+      success: false,
+      message: `Error getting all claimable fees: ${(error as Error).message}`,
+      poolName: "All Pools",
       error
     }];
   }
