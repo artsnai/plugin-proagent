@@ -11,6 +11,9 @@ The plugin offers the following capabilities:
 - View staked LP positions and rewards
 - Deposit tokens into your manager
 - Add liquidity to Aerodrome pools
+- Liquidate positions (unstake and remove liquidity)
+- Withdraw tokens from your manager
+- Claim rewards from staked positions
 
 ## Configuration
 
@@ -58,6 +61,21 @@ Example: "Deposit 10 USDC to my manager"
 Adds liquidity to an Aerodrome pool and automatically stakes the LP tokens for rewards.
 
 Example: "Add liquidity to the USDC-AERO pool"
+
+### LIQUIDATE_POSITION
+Unstakes LP tokens and removes liquidity from a specified pool, returning the underlying tokens to your manager.
+
+Example: "Liquidate my USDC-WETH position"
+
+### WITHDRAW_TOKENS
+Withdraws tokens from your manager contract to your wallet.
+
+Example: "Withdraw all my USDC" or "Withdraw 5 WETH"
+
+### CLAIM_REWARDS
+Claims rewards from your staked positions in Aerodrome pools.
+
+Example: "Claim rewards from USDC-WETH pool" or "Claim all my rewards"
 
 ## Development
 
@@ -139,12 +157,29 @@ Aerodrome is a decentralized exchange (DEX) on the Base network, forked from Vel
    - Check your balances and staked positions regularly.
    - Ask: "Show me my staked positions"
 
+5. **Claim Rewards**:
+   - Harvest rewards from your staked positions when they accumulate.
+   - Ask: "Claim rewards from USDC-WETH pool" or "Claim all my rewards"
+
+6. **Liquidate Positions**:
+   - When you want to exit a position, you can liquidate it to unstake and remove liquidity in one step.
+   - Ask: "Liquidate my USDC-WETH position"
+
+7. **Withdraw Tokens**:
+   - After removing liquidity or when you need your tokens, withdraw them to your wallet.
+   - Ask: "Withdraw all my USDC" or "Withdraw 5 WETH"
+
 ### Important Note on Contract Implementation
 
 This plugin requires the manager contract to implement certain functions:
 - `addLiquidityAerodrome` - To add liquidity to pools
 - `approveToken` - To approve token spending
 - `stakeLPTokens` - To stake LP tokens in gauges
+- `unstakeLPTokens` - To unstake LP tokens from gauges
+- `removeLiquidity` - To remove liquidity from pools
+- `withdrawTokens` - To withdraw tokens from the manager
+- `claimRewards` - To claim rewards from a specific pool
+- `claimAllRewards` - To claim rewards from all pools
 
 If your contract implementation is missing any of these methods, some actions may fail. Make sure to use the latest UserLPManager contract that includes all required functionality.
 

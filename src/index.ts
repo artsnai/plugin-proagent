@@ -14,7 +14,7 @@ import {
   logger,
 } from '@elizaos/core';
 import { z } from 'zod';
-import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult } from './aerodromeUtils';
+import { getManagerAddress, getTokenBalances, getStakedPositions, addLiquidityAndStake, depositTokens, AddLiquidityAndStakeResult, unstakeAndRemoveLiquidity, UnstakeAndRemoveLiquidityResult, withdrawTokens, WithdrawTokensResult, claimPoolRewards, claimAllPoolRewards, ClaimRewardsResult } from './aerodromeUtils';
 
 /**
  * Defines the configuration schema for a plugin, including the validation rules for the plugin name.
@@ -952,6 +952,203 @@ const withdrawTokensAction: Action = {
   ],
 };
 
+/**
+ * Claim Rewards action
+ * Claims rewards from staked positions in Aerodrome
+ */
+const claimRewardsAction: Action = {
+  name: 'CLAIM_REWARDS',
+  similes: ['CLAIM', 'HARVEST_REWARDS', 'GET_REWARDS'],
+  description: 'Claims rewards from staked positions in Aerodrome pools',
+
+  validate: async (_runtime: IAgentRuntime, message: Memory, _state: State): Promise<boolean> => {
+    // Check if a claim-related term is mentioned
+    const text = message.content.text.toLowerCase();
+    return text.includes('claim') || text.includes('harvest') || text.includes('rewards');
+  },
+
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state: State,
+    _options: any,
+    callback: HandlerCallback,
+    _responses: Memory[]
+  ) => {
+    try {
+      logger.info('Handling CLAIM_REWARDS action');
+
+      // Check if the message mentions "all" rewards
+      const text = message.content.text.toLowerCase();
+      const claimAll = text.includes('all');
+      
+      // If not claiming all, try to find pool name
+      let poolName = '';
+      if (!claimAll) {
+        // Try to find pool name in common formats
+        const poolRegex = /([A-Za-z0-9]+-[A-Za-z0-9]+)(?:\s+pool)?|(?:pool|position|rewards)(?:\s+(?:for|in|on|from))?\s+([A-Za-z0-9]+-[A-Za-z0-9]+)/i;
+        const match = text.match(poolRegex);
+        
+        if (match && (match[1] || match[2])) {
+          // Take whichever group matched
+          poolName = (match[1] || match[2]).toUpperCase(); // Convert to uppercase for consistency
+        }
+      }
+      
+      let initialResponse: Content;
+      
+      if (claimAll) {
+        // Claiming all rewards
+        initialResponse = {
+          text: `Claiming rewards from all eligible pools. This may take a moment...`,
+          actions: ['CLAIM_REWARDS'],
+          source: message.content.source,
+        };
+      } else if (poolName) {
+        // Claiming rewards from a specific pool
+        initialResponse = {
+          text: `Claiming rewards from the ${poolName} pool. This may take a moment...`,
+          actions: ['CLAIM_REWARDS'],
+          source: message.content.source,
+        };
+      } else {
+        // No pool specified and not claiming all
+        const missingPoolResponse: Content = {
+          text: `Please specify which pool you want to claim rewards from, or say "claim all rewards" to claim from all pools.`,
+          actions: ['CLAIM_REWARDS'],
+          source: message.content.source,
+        };
+        await callback(missingPoolResponse);
+        return missingPoolResponse;
+      }
+      
+      // Send initial response
+      await callback(initialResponse);
+      
+      // Perform the claim operation
+      let responseText = '';
+      
+      if (claimAll) {
+        // Claim from all pools
+        const results = await claimAllPoolRewards();
+        
+        if (results.length === 0) {
+          responseText = "No eligible pools found for claiming rewards.";
+        } else if (results.length === 1 && !results[0].success) {
+          // Single error result
+          responseText = `Failed to claim rewards: ${results[0].message}`;
+        } else {
+          // Success or partial success
+          const successResults = results.filter(r => r.success);
+          const failureResults = results.filter(r => !r.success);
+          
+          if (successResults.length > 0) {
+            responseText = `Successfully claimed rewards from ${successResults.length} pool${successResults.length !== 1 ? 's' : ''}.`;
+            
+            // Add details about claimed pools if available
+            const poolNames = successResults
+              .filter(r => r.poolName)
+              .map(r => r.poolName);
+              
+            if (poolNames.length > 0) {
+              responseText += `\nClaimed pools: ${poolNames.join(', ')}`;
+            }
+          }
+          
+          // Add info about failures if any
+          if (failureResults.length > 0) {
+            if (responseText) responseText += '\n\n';
+            responseText += `Failed to claim rewards from ${failureResults.length} pool${failureResults.length !== 1 ? 's' : ''}.`;
+            
+            // Add reason for first failure
+            if (failureResults[0].message) {
+              responseText += `\nReason: ${failureResults[0].message}`;
+            }
+          }
+        }
+      } else {
+        // Claim from specific pool
+        const result = await claimPoolRewards(poolName);
+        
+        if (result.success) {
+          responseText = `Successfully claimed rewards from the ${poolName} pool.`;
+          
+          if (result.amountClaimed) {
+            responseText += `\nAmount claimed: ${result.amountClaimed} AERO`;
+          }
+          
+          if (result.txHash) {
+            responseText += `\nTransaction hash: ${result.txHash}`;
+          }
+        } else {
+          responseText = `Failed to claim rewards from the ${poolName} pool: ${result.message}`;
+          
+          // Add more specific guidance based on common errors
+          if (result.message && result.message.includes('No rewards')) {
+            responseText += `\nYou might need to wait longer for rewards to accumulate.`;
+          } else if (result.message && result.message.includes('No staked position found')) {
+            responseText += `\nYou don't have any staked LP tokens in this pool. Check your positions with the STAKED_POSITIONS action.`;
+          }
+        }
+      }
+
+      const responseContent: Content = {
+        text: responseText,
+        actions: ['CLAIM_REWARDS'],
+        source: message.content.source,
+      };
+
+      await callback(responseContent);
+      return responseContent;
+    } catch (error) {
+      logger.error('Error in CLAIM_REWARDS action:', error);
+      
+      // Handle error case
+      const errorContent: Content = {
+        text: `Error claiming rewards: ${(error as Error).message}`,
+        actions: ['CLAIM_REWARDS'],
+        source: message.content.source,
+      };
+      
+      await callback(errorContent);
+      return errorContent;
+    }
+  },
+
+  examples: [
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Claim rewards from USDC-WETH pool',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully claimed rewards from the USDC-WETH pool.\nAmount claimed: 10.5 AERO\nTransaction hash: 0x1234...',
+          actions: ['CLAIM_REWARDS'],
+        },
+      },
+    ],
+    [
+      {
+        name: '{{name1}}',
+        content: {
+          text: 'Claim all my rewards',
+        },
+      },
+      {
+        name: '{{name2}}',
+        content: {
+          text: 'Successfully claimed rewards from 3 pools.\nClaimed pools: USDC-WETH, USDC-AERO, WETH-AERO',
+          actions: ['CLAIM_REWARDS'],
+        },
+      },
+    ],
+  ],
+};
+
 export class StarterService extends Service {
   static serviceType = 'starter';
   capabilityDescription =
@@ -1117,7 +1314,7 @@ export const starterPlugin: Plugin = {
     ],
   },
   services: [StarterService],
-  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction],
+  actions: [helloWorldAction, balancesAction, getManagerAddressAction, stakedPositionsAction, addLiquidityAction, depositTokensAction, liquidatePositionAction, withdrawTokensAction, claimRewardsAction],
   providers: [helloWorldProvider],
 };
 

@@ -53,6 +53,18 @@ export interface WithdrawTokensResult {
   error?: any;
 }
 
+// Define interface for claim rewards result
+export interface ClaimRewardsResult {
+  success: boolean;
+  message?: string;
+  txHash?: string;
+  poolName?: string;
+  lpToken?: string;
+  gaugeAddress?: string;
+  amountClaimed?: string;
+  error?: any;
+}
+
 // Initialize provider and signer from environment variables
 const initializeProvider = () => {
   try {
@@ -776,5 +788,147 @@ export const withdrawTokens = async (tokenSymbol: string, amount: number | strin
       amount,
       error
     };
+  }
+};
+
+// Claim rewards from a specific pool
+export const claimPoolRewards = async (poolName: string): Promise<ClaimRewardsResult> => {
+  try {
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // First get staked positions
+    const positionsResult = await getStakedPositions();
+    
+    if (!positionsResult || !positionsResult.stakedPositions) {
+      return {
+        success: false,
+        message: "Could not retrieve staked positions",
+        poolName
+      };
+    }
+    
+    // Find the staked position for this pool
+    const stakedPosition = positionsResult.stakedPositions.find(
+      position => position.poolName.toLowerCase() === poolName.toLowerCase()
+    );
+    
+    if (!stakedPosition) {
+      return {
+        success: false,
+        message: `No staked position found for ${poolName}`,
+        poolName
+      };
+    }
+    
+    // Check if there are any rewards to claim
+    if (stakedPosition.earned === 0n || (typeof stakedPosition.earned === 'string' && stakedPosition.earned === '0')) {
+      return {
+        success: false,
+        message: `No rewards to claim for ${poolName}`,
+        poolName,
+        lpToken: stakedPosition.lpToken,
+        gaugeAddress: stakedPosition.gauge
+      };
+    }
+    
+    // Claim rewards
+    console.log(`Claiming rewards for ${poolName}...`);
+    const result = await manager.claimRewards(
+      stakedPosition.lpToken,
+      poolName,
+      stakedPosition.gauge
+    );
+    
+    if (!result.success) {
+      return {
+        success: false,
+        message: `Failed to claim rewards: ${result.message}`,
+        poolName,
+        lpToken: stakedPosition.lpToken,
+        gaugeAddress: stakedPosition.gauge
+      };
+    }
+    
+    // Get the earned amount that was claimed (if available)
+    const amountClaimed = stakedPosition.formattedEarned || 
+                          stakedPosition.earnedFormatted || 
+                          "Unknown amount";
+    
+    console.log(`Rewards claimed successfully for ${poolName}`);
+    return {
+      success: true,
+      message: `Successfully claimed ${amountClaimed} AERO rewards from ${poolName}`,
+      txHash: result.txHash,
+      poolName,
+      lpToken: stakedPosition.lpToken,
+      gaugeAddress: stakedPosition.gauge,
+      amountClaimed
+    };
+    
+  } catch (error) {
+    console.error('Error claiming pool rewards:', error);
+    return {
+      success: false,
+      message: `Error claiming rewards: ${(error as Error).message}`,
+      poolName,
+      error
+    };
+  }
+};
+
+// Claim rewards from all pools
+export const claimAllPoolRewards = async (): Promise<ClaimRewardsResult[]> => {
+  try {
+    const manager = await getAerodromeManager();
+    await manager.initialize();
+    
+    // Call the claimAllRewards method
+    console.log('Claiming rewards from all pools...');
+    const result = await manager.claimAllRewards();
+    
+    if (!result.success) {
+      return [{
+        success: false,
+        message: `Failed to claim rewards: ${result.message}`
+      }];
+    }
+    
+    // Process the results
+    const claimResults: ClaimRewardsResult[] = [];
+    
+    if (result.results && Array.isArray(result.results)) {
+      for (const poolResult of result.results) {
+        claimResults.push({
+          success: true,
+          message: `Successfully claimed rewards from ${poolResult.poolName || 'a pool'}`,
+          txHash: poolResult.txHash,
+          poolName: poolResult.poolName,
+          lpToken: poolResult.lpToken,
+          gaugeAddress: poolResult.gaugeAddress
+        });
+      }
+      
+      console.log(`Successfully claimed rewards from ${claimResults.length} pools`);
+    } else {
+      // If no individual results were provided, create a generic success result
+      // The transaction hash may not be available in the result
+      claimResults.push({
+        success: true,
+        message: 'Successfully claimed rewards from all eligible pools'
+      });
+      
+      console.log('Successfully claimed rewards from all eligible pools');
+    }
+    
+    return claimResults;
+    
+  } catch (error) {
+    console.error('Error claiming all pool rewards:', error);
+    return [{
+      success: false,
+      message: `Error claiming all rewards: ${(error as Error).message}`,
+      error
+    }];
   }
 }; 
