@@ -1,0 +1,26 @@
+{
+  "name": "@elizaos/plugin-proagent",
+  "version": "1.0.0-beta.40",
+  "description": "Plugin starter for elizaOS",
+  "type": "plugin",
+  "platform": "universal",
+  "runtimeVersion": "1.0.0-beta.41",
+  "repository": "github:elizaos-plugins/plugin-proagent",
+  "maintainers": [
+    "blackflame007"
+  ],
+  "publishedAt": "2025-05-05T22:24:18.986Z",
+  "publishedBy": "blackflame007",
+  "dependencies": {
+    "@elizaos/cli": "1.0.0-beta.41",
+    "@elizaos/core": "1.0.0-beta.41",
+    "@elizaos/plugin-bootstrap": "1.0.0-beta.41",
+    "@elizaos/plugin-local-ai": "1.0.0-beta.41",
+    "@elizaos/plugin-openai": "1.0.0-beta.41",
+    "@elizaos/plugin-sql": "1.0.0-beta.41",
+    "ethers": "^6.13.7",
+    "zod": "3.24.2"
+  },
+  "tags": [],
+  "license": "UNLICENSED"
+}
