@@ -2,6 +2,42 @@
 
 This ElizaOS plugin provides integration with the Aerodrome protocol on the Base network, allowing for liquidity provision, token management, and DeFi interactions directly through ProAgent Smart contracts.
 
+```mermaid
+flowchart TD
+    subgraph "User Interfaces"
+        A[ProAgent Website] 
+        B[ElizaOS Plugin]
+    end
+    
+    subgraph "Smart Contracts"
+        C[ProAgent Manager Contract]
+        D[Aerodrome Protocol Contracts]
+    end
+    
+    A -->|"User interactions"| C
+    B -->|"Interface to ElizaOS"| C
+    C -->|"Executes DeFi operations"| D
+    
+    D -->|"LP Positions"| D1[Liquidity Pools]
+    D -->|"Yield Farming"| D2[Staking/Gauges]
+    D -->|"Tokenomics"| D3[veAERO]
+    
+    C -->|"Manages"| E1[Token Balances]
+    C -->|"Tracks"| E2[Staked Positions]
+    C -->|"Claims"| E3[Rewards & Fees]
+    
+    style A fill:#c3e5ff,stroke:#333,stroke-width:2px
+    style B fill:#c3e5ff,stroke:#333,stroke-width:2px
+    style C fill:#ffe6cc,stroke:#333,stroke-width:2px
+    style D fill:#d5e8d4,stroke:#333,stroke-width:2px
+    style D1 fill:#d5e8d4,stroke:#333,stroke-width:1px
+    style D2 fill:#d5e8d4,stroke:#333,stroke-width:1px
+    style D3 fill:#d5e8d4,stroke:#333,stroke-width:1px
+    style E1 fill:#ffe6cc,stroke:#333,stroke-width:1px
+    style E2 fill:#ffe6cc,stroke:#333,stroke-width:1px
+    style E3 fill:#ffe6cc,stroke:#333,stroke-width:1px
+```
+
 ## Features
 
 The plugin offers the following capabilities:
@@ -131,46 +167,6 @@ Before publishing your plugin to the ElizaOS registry, ensure you meet these req
    ```
 
 After publishing, your plugin will be submitted as a pull request to the ElizaOS registry for review.
-
-## Documentation
-
-### System Architecture
-
-```mermaid
-flowchart TD
-    subgraph "User Interfaces"
-        A[ProAgent Website] 
-        B[ElizaOS Plugin]
-    end
-    
-    subgraph "Smart Contracts"
-        C[ProAgent Manager Contract]
-        D[Aerodrome Protocol Contracts]
-    end
-    
-    A -->|"User interactions"| C
-    B -->|"Interface to ElizaOS"| C
-    C -->|"Executes DeFi operations"| D
-    
-    D -->|"LP Positions"| D1[Liquidity Pools]
-    D -->|"Yield Farming"| D2[Staking/Gauges]
-    D -->|"Tokenomics"| D3[veAERO]
-    
-    C -->|"Manages"| E1[Token Balances]
-    C -->|"Tracks"| E2[Staked Positions]
-    C -->|"Claims"| E3[Rewards & Fees]
-    
-    style A fill:#c3e5ff,stroke:#333,stroke-width:2px
-    style B fill:#c3e5ff,stroke:#333,stroke-width:2px
-    style C fill:#ffe6cc,stroke:#333,stroke-width:2px
-    style D fill:#d5e8d4,stroke:#333,stroke-width:2px
-    style D1 fill:#d5e8d4,stroke:#333,stroke-width:1px
-    style D2 fill:#d5e8d4,stroke:#333,stroke-width:1px
-    style D3 fill:#d5e8d4,stroke:#333,stroke-width:1px
-    style E1 fill:#ffe6cc,stroke:#333,stroke-width:1px
-    style E2 fill:#ffe6cc,stroke:#333,stroke-width:1px
-    style E3 fill:#ffe6cc,stroke:#333,stroke-width:1px
-```
 
 ### About ProAgent
 
